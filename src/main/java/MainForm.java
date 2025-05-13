@@ -16,9 +16,18 @@ public class MainForm {
     private JComboBox<Integer> yearcomboBox2;
     private JComboBox avtocomboBox1;
     private JButton rezervirajButton;
+    private JTabbedPane tabbedPane1;
+    private JPanel najemTab;
+    private JPanel najetoTab;
+    private JButton refreshButton;
+    private JComboBox najetiComboBox1;
+    private JButton odstraniRezervacijoButton;
 
     private LocalDate selectedDate1;
     private LocalDate selectedDate2;
+
+    private String username;
+    private String email;
 
     // Getter for the mainPanel to display it in the JFrame
     public JPanel getMainPanel() {
@@ -45,7 +54,10 @@ public class MainForm {
 
 
     // Constructor: Called when the form is initialized
-    public MainForm() {
+    public MainForm(String username, String email) {
+
+        this.username = username;
+        this.email = email;
         // Initialize the combo boxes with the current date values
         LocalDate today = LocalDate.now();
 
@@ -69,7 +81,7 @@ public class MainForm {
         rezervirajButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                // Get selected dates
+                // 1. Get selected dates
                 Integer day1 = (Integer) daycomboBox1.getSelectedItem();
                 Integer month1 = (Integer) monthcomboBox1.getSelectedItem();
                 Integer year1 = (Integer) yearcomboBox1.getSelectedItem();
@@ -87,20 +99,74 @@ public class MainForm {
                 LocalDate datumIzposoje = LocalDate.of(year1, month1, day1);
                 LocalDate datumVracila = LocalDate.of(year2, month2, day2);
 
-                // Save to database
+                // 2. Get selected car string from combo box
+                String selectedItem = (String) avtocomboBox1.getSelectedItem();
+                if (selectedItem == null || !selectedItem.contains("Tablica:")) {
+                    JOptionPane.showMessageDialog(null, "Please select a vehicle.");
+                    return;
+                }
+
+                // 3. Extract license plate from the selected item
+                String[] parts = selectedItem.split("Tablica:");
+                String tablica = parts[1].trim();  // Get the part after "Tablica:"
+
+                // 4. Connect to database
                 Connection connection = connectToDatabase();
                 if (connection != null) {
                     try {
-                        String sql = "INSERT INTO najemnine (datum_izposoje, datum_vracila) VALUES (?, ?)";
-                        PreparedStatement stmt = connection.prepareStatement(sql);
-                        stmt.setDate(1, java.sql.Date.valueOf(datumIzposoje));
-                        stmt.setDate(2, java.sql.Date.valueOf(datumVracila));
+                        // 5. Get najemnik_id based on email
+                        String getNajemnikIdQuery = "SELECT id FROM najemniki WHERE email = ?";
+                        PreparedStatement getStmt = connection.prepareStatement(getNajemnikIdQuery);
+                        getStmt.setString(1, email);
+                        ResultSet rs = getStmt.executeQuery();
 
-                        stmt.executeUpdate();
-                        stmt.close();
+                        int najemnikId = -1;
+                        if (rs.next()) {
+                            najemnikId = rs.getInt("id");
+                        }
+
+                        if (najemnikId != -1) {
+                            // 6. Insert into najemnine
+                            String insertSql = "INSERT INTO najemnine (datum_izposoje, datum_vracila, najemnik_id) VALUES (?, ?, ?)";
+                            PreparedStatement insertStmt = connection.prepareStatement(insertSql, Statement.RETURN_GENERATED_KEYS);
+                            insertStmt.setDate(1, java.sql.Date.valueOf(datumIzposoje));
+                            insertStmt.setDate(2, java.sql.Date.valueOf(datumVracila));
+                            insertStmt.setInt(3, najemnikId);
+                            insertStmt.executeUpdate();
+
+                            ResultSet generatedKeys = insertStmt.getGeneratedKeys();
+                            int najemninaId = -1;
+                            if (generatedKeys.next()) {
+                                najemninaId = generatedKeys.getInt(1);
+                            }
+
+                            insertStmt.close();
+
+                            // 7. Update avtomobili with najemnina_id
+                            if (najemninaId != -1) {
+                                String updateSql = "UPDATE avtomobili SET najemnina_id = ? WHERE registerska_tablica = ?";
+                                PreparedStatement updateStmt = connection.prepareStatement(updateSql);
+                                updateStmt.setInt(1, najemninaId);
+                                updateStmt.setString(2, tablica);
+                                int affectedRows = updateStmt.executeUpdate();
+
+                                if (affectedRows > 0) {
+                                    JOptionPane.showMessageDialog(null, "Reservation and vehicle update successful!");
+                                } else {
+                                    JOptionPane.showMessageDialog(null, "Reservation saved, but vehicle update failed.");
+                                }
+
+                                updateStmt.close();
+                            }
+                        } else {
+                            JOptionPane.showMessageDialog(null, "No user found with the provided email.");
+                        }
+
+                        populateAvtoComboBox();
+
+                        rs.close();
+                        getStmt.close();
                         connection.close();
-
-                        JOptionPane.showMessageDialog(null, "Reservation saved!");
                     } catch (SQLException ex) {
                         ex.printStackTrace();
                         JOptionPane.showMessageDialog(null, "Failed to save reservation.");
@@ -110,6 +176,117 @@ public class MainForm {
         });
 
 
+        odstraniRezervacijoButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                // Get selected vehicle from the najetiComboBox1
+                String selectedCar = (String) najetiComboBox1.getSelectedItem();
+
+                if (selectedCar == null || selectedCar.isEmpty()) {
+                    JOptionPane.showMessageDialog(null, "Please select a vehicle to remove the reservation.");
+                    return;
+                }
+
+                // Extract the "registerska_tablica" from the display string
+                String[] parts = selectedCar.split(" | ");  // Assuming the format is: "Model: <model> | Barva: <barva> | Tablica: <registerska_tablica>"
+                String registerskaTablica = parts[parts.length - 1];  // Get the last part as the "registerska_tablica"
+
+                // Connect to the database
+                Connection connection = connectToDatabase();
+                if (connection != null) {
+                    try {
+                        // SQL query to update the najemnina_id to NULL for the selected car (based on registerska_tablica)
+                        String sql = "UPDATE avtomobili SET najemnina_id = NULL WHERE registerska_tablica = ?";
+                        PreparedStatement stmt = connection.prepareStatement(sql);
+                        stmt.setString(1, registerskaTablica);  // Set the "registerska_tablica" to match the selected car
+
+                        populateAvtoComboBox();
+                        refreshNajetiComboBox();
+                        int rowsAffected = stmt.executeUpdate();
+
+                        if (rowsAffected > 0) {
+                            JOptionPane.showMessageDialog(null, "Reservation successfully removed for the vehicle.");
+
+                            // Optionally, refresh the combo box to reflect the update
+                            populateAvtoComboBox();  // Call this method to refresh the combo box
+
+                        } else {
+                            JOptionPane.showMessageDialog(null, "No vehicle found with the provided registerska_tablica.");
+                        }
+
+                        stmt.close();
+                        connection.close();
+                    } catch (SQLException ex) {
+                        ex.printStackTrace();
+                        JOptionPane.showMessageDialog(null, "Failed to remove reservation.");
+                    }
+                }
+            }
+        });
+
+
+
+        refreshButton.addActionListener(new ActionListener() {
+            /**
+             * Invoked when an action occurs.
+             *
+             * @param e the event to be processed
+             */
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                Connection connection = connectToDatabase();
+
+                if (connection != null) {
+                    try {
+                        // 1. Get the 'najemnik_id' for the current user (email)
+                        String getNajemnikIdQuery = "SELECT id FROM najemniki WHERE email = ?";
+                        PreparedStatement getStmt = connection.prepareStatement(getNajemnikIdQuery);
+                        getStmt.setString(1, email);  // Set the email for search
+                        ResultSet rs = getStmt.executeQuery();
+
+                        // 2. Retrieve the 'najemnik_id'
+                        int najemnikId = -1;
+                        if (rs.next()) {
+                            najemnikId = rs.getInt("id");
+                        }
+
+                        // 3. If we found the 'najemnik_id', proceed with fetching associated cars
+                        if (najemnikId != -1) {
+                            // Query to get all vehicles ('avtomobili') associated with the user's reservations ('najemnine')
+                            String getAvtomobiliQuery = "SELECT a.registerska_tablica " +
+                                    "FROM avtomobili a " +
+                                    "JOIN najemnine n ON a.najemnina_id = n.id " +  // Assuming 'avto_id' is the FK in 'najemnine' for 'avtomobili'
+                                    "WHERE n.najemnik_id = ?";
+                            PreparedStatement getAvtomobiliStmt = connection.prepareStatement(getAvtomobiliQuery);
+                            getAvtomobiliStmt.setInt(1, najemnikId);  // Set the 'najemnik_id' to get the vehicles associated with this user
+                            ResultSet carRs = getAvtomobiliStmt.executeQuery();
+
+                            // Clear any existing items in the combo box
+                            najetiComboBox1.removeAllItems();
+
+                            // 4. Add the retrieved vehicles to the combo box
+                            while (carRs.next()) {
+                                String registerskaTablica = carRs.getString("registerska_tablica");
+                                najetiComboBox1.addItem(registerskaTablica);  // Add vehicle to combo box
+                            }
+
+                            // Close resources
+                            carRs.close();
+                            getAvtomobiliStmt.close();
+                        } else {
+                            JOptionPane.showMessageDialog(null, "No user found with the provided email.");
+                        }
+
+                        rs.close();
+                        getStmt.close();
+                    } catch (SQLException ex) {
+                        ex.printStackTrace();
+                        JOptionPane.showMessageDialog(null, "Failed to fetch vehicles.");
+                    }
+                }
+
+            }
+        });
     }
 
     private void populateAvtoComboBox() {
@@ -123,6 +300,7 @@ public class MainForm {
                 FROM avtomobili a
                 JOIN modeli m ON a.model_id = m.id
                 JOIN barve b ON a.barva_id = b.id
+                WHERE a.najemnina_id IS NULL
             """;
 
                 PreparedStatement stmt = connection.prepareStatement(sql);
@@ -207,6 +385,40 @@ public class MainForm {
         }
     }
 
+    private void refreshNajetiComboBox() {
+        Connection connection = connectToDatabase();
+        if (connection != null) {
+            try {
+                // Query to get all reserved vehicles for the logged-in user
+                String getReservedVehiclesQuery = "SELECT a.registerska_tablica " +
+                        "FROM avtomobili a " +
+                        "JOIN najemnine n ON a.najemnina_id = n.id " +
+                        "WHERE n.najemnik_id = (SELECT id FROM najemniki WHERE email = ?)";
+                PreparedStatement stmt = connection.prepareStatement(getReservedVehiclesQuery);
+                stmt.setString(1, email);  // Pass the logged-in user's email to filter by user
+
+                ResultSet rs = stmt.executeQuery();
+
+                // Clear the combo box before populating it with new data
+                najetiComboBox1.removeAllItems();
+
+                // Populate najetiComboBox1 with reserved vehicles
+                while (rs.next()) {
+                    String registerskaTablica = rs.getString("registerska_tablica");
+                    najetiComboBox1.addItem(registerskaTablica);
+                }
+
+                rs.close();
+                stmt.close();
+                connection.close();
+            } catch (SQLException ex) {
+                ex.printStackTrace();
+                JOptionPane.showMessageDialog(null, "Failed to fetch reserved vehicles.");
+            }
+        }
+    }
+
+
     // Method to update the restrictions for comboBox2 based on comboBox1's selected date
     private void updateDateRestrictions() {
         // Ensure combo box values are valid
@@ -266,6 +478,12 @@ public class MainForm {
     // The `createUIComponents()` method is required by the Designer
     private void createUIComponents() {
         // Ensure all components are initialized before performing actions on them
+        tabbedPane1 = new javax.swing.JTabbedPane();
+        najemTab = new javax.swing.JPanel();
+        najetoTab = new javax.swing.JPanel();
+
+        najetiComboBox1 = new javax.swing.JComboBox<>();
+
         daycomboBox1 = new JComboBox<>();
         monthcomboBox1 = new JComboBox<>();
         yearcomboBox1 = new JComboBox<>();
@@ -275,6 +493,9 @@ public class MainForm {
 
         avtocomboBox1 = new JComboBox<>();
         rezervirajButton = new JButton("Rezerviraj");
+
+        odstraniRezervacijoButton = new JButton("Odstrani Rezervacijo");
+
 
         // Populate months (1 to 12)
         for (int i = 1; i <= 12; i++) {

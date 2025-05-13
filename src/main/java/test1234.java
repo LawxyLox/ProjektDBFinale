@@ -62,7 +62,7 @@ public class test1234 extends JFrame {
                             topFrame.dispose();
 
                             // Open the MainForm
-                            MainForm mainForm = new MainForm();  // Create MainForm instance
+                            MainForm mainForm = new MainForm(username, email);
                             JFrame frame = new JFrame("Main Dashboard");
                             frame.setContentPane(mainForm.getMainPanel());  // Set the panel of MainForm
                             frame.setSize(800, 600);
