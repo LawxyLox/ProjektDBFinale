@@ -14,6 +14,13 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
+    <repositories>
+        <repository>
+            <id>central</id>
+            <url>https://repo.maven.apache.org/maven2</url>
+        </repository>
+    </repositories>
+
     <dependencies>
         <!-- PostgreSQL JDBC Driver -->
         <dependency>
@@ -21,5 +28,21 @@
             <artifactId>postgresql</artifactId>
             <version>42.2.23</version> <!-- Use the latest version -->
         </dependency>
+        <dependency>
+            <groupId>org.example</groupId>
+            <artifactId>Projekt2</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>org.no-hope</groupId>
+            <artifactId>env-java</artifactId>
+            <version>11</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.cdimascio</groupId>
+            <artifactId>dotenv-java</artifactId>
+            <version>3.0.0</version>
+        </dependency>
     </dependencies>
+
 </project>
